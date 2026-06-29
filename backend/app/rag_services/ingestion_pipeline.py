@@ -13,7 +13,7 @@ from ..models import (
     IndexedDocument, DocumentChunk, VectorCollection,
     EmbeddingProvider, ChunkingStrategy
 )
-from ..utils.extract_text import extract_text
+from ..utils.extract_text_from_path import extract_text_from_file
 from .chunking_service import ChunkingStrategyFactory
 from .embedding_providers import EmbeddingProviderFactory
 from .chroma_service import chroma_service
@@ -55,7 +55,7 @@ class IngestionPipeline:
         
         # Step 1: Extract text
         logger.info("Extracting text...")
-        text = extract_text(file_path)
+        text = extract_text_from_file(file_path)
         if not text:
             raise ValueError(f"No text extracted from {file_path}")
         
@@ -71,7 +71,7 @@ class IngestionPipeline:
             collection_id=collection_id,
             embedding_provider_id=embedding_provider_id,
             chunking_strategy_id=chunking_strategy_id,
-            metadata=metadata or {},
+            doc_metadata=metadata or {},
             status="processing"
         )
         self.session.add(document)
@@ -144,7 +144,7 @@ class IngestionPipeline:
                     start_char=chunk.start_char,
                     end_char=chunk.end_char,
                     chroma_id=chunk_ids[i],
-                    metadata=chunk.metadata
+                    chunk_metadata=chunk.metadata
                 )
                 self.session.add(chunk_record)
             
@@ -159,7 +159,7 @@ class IngestionPipeline:
         except Exception as e:
             logger.error(f"Error ingesting document: {e}")
             document.status = "failed"
-            document.metadata["error"] = str(e)
+            document.doc_metadata = {**(document.doc_metadata or {}), "error": str(e)}
             self.session.commit()
             raise
     
@@ -261,7 +261,7 @@ class IngestionPipeline:
             collection_id=document.collection_id,
             embedding_provider_id=document.embedding_provider_id,
             chunking_strategy_id=document.chunking_strategy_id,
-            metadata=document.metadata
+            metadata=document.doc_metadata
         )
     
     def _compute_hash(self, content: str) -> str:

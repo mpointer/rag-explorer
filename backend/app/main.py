@@ -44,9 +44,18 @@ def health():
 
 @app.on_event("startup")
 def on_startup():
-    """Initialize database on startup"""
+    """Initialize and seed the database on startup"""
     logger.info("Initializing database...")
     init_db()
+
+    # Seed default providers, chunking strategies, and collection so the UI
+    # has something to work with out of the box.
+    try:
+        from .seed import seed_database
+        seed_database()
+    except Exception as e:  # pragma: no cover - non-fatal seeding failure
+        logger.warning(f"Database seeding skipped: {e}")
+
     logger.info("RAG Explorer API started successfully")
 
 

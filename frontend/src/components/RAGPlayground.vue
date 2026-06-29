@@ -190,7 +190,7 @@
                 class="hidden"
               />
               <button
-                @click="$refs.fileInput.click()"
+                @click="fileInput?.click()"
                 class="px-6 py-3 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
               >
                 Select File
