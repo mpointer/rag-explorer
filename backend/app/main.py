@@ -49,12 +49,15 @@ def on_startup():
     init_db()
 
     # Seed default providers, chunking strategies, and collection so the UI
-    # has something to work with out of the box.
+    # has something to work with out of the box. seed_database() is idempotent
+    # and self-healing across both SQLite and Chroma, so we let its failures
+    # surface rather than silently starting in an inconsistent state.
     try:
         from .seed import seed_database
+    except ImportError as exc:  # pragma: no cover - startup can continue without seeding support
+        logger.warning("Database seeding unavailable: %s", exc)
+    else:
         seed_database()
-    except Exception as e:  # pragma: no cover - non-fatal seeding failure
-        logger.warning(f"Database seeding skipped: {e}")
 
     logger.info("RAG Explorer API started successfully")
 

@@ -15,13 +15,17 @@ def seed_database():
     
     with Session(engine) as session:
         logger.info("Seeding database...")
-        
-        # Check if already seeded
+
+        # Provider/strategy/collection rows are only inserted once, but the
+        # default Chroma collection is (re)ensured on every call below so a
+        # prior partial seed (SQL committed, Chroma creation failed) self-heals
+        # on the next startup instead of being skipped forever.
         existing_providers = session.exec(select(EmbeddingProvider)).first()
         if existing_providers:
-            logger.info("Database already seeded")
+            logger.info("Database already seeded; ensuring default collection")
+            _ensure_default_collection(session)
             return
-        
+
         # Seed embedding providers
         providers = [
             EmbeddingProvider(
@@ -110,22 +114,36 @@ def seed_database():
         
         logger.info(f"Added {len(strategies)} chunking strategies")
         
-        # Create default collection
+        session.commit()
+
+        # Create the default collection in both SQLite and ChromaDB.
+        _ensure_default_collection(session)
+
+        logger.info("Database seeded successfully")
+
+
+def _ensure_default_collection(session: Session) -> None:
+    """Ensure the default collection exists in both SQLite and ChromaDB.
+
+    Idempotent: safe to call on every startup. Chroma's create_collection
+    returns the existing collection if present, so a previously failed Chroma
+    creation is repaired here even when the SQL rows already exist.
+    """
+    default_collection = session.exec(
+        select(VectorCollection).where(VectorCollection.name == "default")
+    ).first()
+    if not default_collection:
         default_collection = VectorCollection(
             name="default",
             description="Default vector collection"
         )
         session.add(default_collection)
-        
         session.commit()
-        
-        # Create collection in ChromaDB
-        chroma_service.create_collection(
-            collection_name="default",
-            metadata={"description": "Default vector collection"}
-        )
-        
-        logger.info("Database seeded successfully")
+
+    chroma_service.create_collection(
+        collection_name="default",
+        metadata={"description": "Default vector collection"}
+    )
 
 
 if __name__ == "__main__":

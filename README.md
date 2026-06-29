@@ -24,7 +24,7 @@ searches and measure retrieval quality with standard IR metrics.
 
 ## Architecture
 
-```
+```text
 frontend/   Vue 3 + Vite + Tailwind single-page playground
 backend/    FastAPI + SQLModel (SQLite) + ChromaDB
 ```
