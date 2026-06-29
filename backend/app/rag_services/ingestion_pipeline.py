@@ -13,7 +13,7 @@ from ..models import (
     IndexedDocument, DocumentChunk, VectorCollection,
     EmbeddingProvider, ChunkingStrategy
 )
-from ..utils.extract_text import extract_text
+from ..utils.extract_text_from_path import extract_text_from_file
 from .chunking_service import ChunkingStrategyFactory
 from .embedding_providers import EmbeddingProviderFactory
 from .chroma_service import chroma_service
@@ -55,14 +55,20 @@ class IngestionPipeline:
         
         # Step 1: Extract text
         logger.info("Extracting text...")
-        text = extract_text(file_path)
+        text = extract_text_from_file(file_path)
         if not text:
             raise ValueError(f"No text extracted from {file_path}")
         
         # Step 2: Create document record
         file_path_obj = Path(file_path)
         content_hash = self._compute_hash(text)
-        
+
+        # Normalize provenance into dedicated columns (e.g. for crawled
+        # content) while keeping any remaining details in the metadata blob.
+        doc_metadata = dict(metadata or {})
+        source_type = doc_metadata.pop("source_type", "upload")
+        source_url = doc_metadata.pop("source_url", None)
+
         document = IndexedDocument(
             filename=file_path_obj.name,
             file_path=str(file_path_obj.absolute()),
@@ -71,7 +77,9 @@ class IngestionPipeline:
             collection_id=collection_id,
             embedding_provider_id=embedding_provider_id,
             chunking_strategy_id=chunking_strategy_id,
-            metadata=metadata or {},
+            source_type=source_type,
+            source_url=source_url,
+            doc_metadata=doc_metadata,
             status="processing"
         )
         self.session.add(document)
@@ -144,7 +152,7 @@ class IngestionPipeline:
                     start_char=chunk.start_char,
                     end_char=chunk.end_char,
                     chroma_id=chunk_ids[i],
-                    metadata=chunk.metadata
+                    chunk_metadata=chunk.metadata
                 )
                 self.session.add(chunk_record)
             
@@ -159,7 +167,7 @@ class IngestionPipeline:
         except Exception as e:
             logger.error(f"Error ingesting document: {e}")
             document.status = "failed"
-            document.metadata["error"] = str(e)
+            document.doc_metadata = {**(document.doc_metadata or {}), "error": str(e)}
             self.session.commit()
             raise
     
@@ -234,8 +242,13 @@ class IngestionPipeline:
             if chunks:
                 chunk_ids = [chunk.chroma_id for chunk in chunks]
                 chroma_service.delete_documents(collection.name, chunk_ids)
-            
-            # Delete from database (cascades to chunks)
+
+            # The document_id foreign key does not cascade (SQLite does not
+            # enforce ON DELETE CASCADE by default), so remove the child chunk
+            # rows explicitly before deleting the parent document.
+            for chunk in chunks:
+                self.session.delete(chunk)
+
             self.session.delete(document)
             self.session.commit()
             
@@ -251,17 +264,30 @@ class IngestionPipeline:
         document = self.session.get(IndexedDocument, document_id)
         if not document:
             raise ValueError(f"Document {document_id} not found")
-        
-        # Delete existing chunks
+
+        # Capture the fields we need before deleting the row (the instance is
+        # expired after delete). Carry forward provenance and persistent
+        # metadata, but drop transient keys like the previous run's "error".
+        file_path = document.file_path
+        collection_id = document.collection_id
+        embedding_provider_id = document.embedding_provider_id
+        chunking_strategy_id = document.chunking_strategy_id
+        metadata = {k: v for k, v in (document.doc_metadata or {}).items() if k != "error"}
+        if document.source_type:
+            metadata["source_type"] = document.source_type
+        if document.source_url:
+            metadata["source_url"] = document.source_url
+
+        # Delete existing chunks and document record
         self.delete_document(document_id)
-        
+
         # Re-ingest
         return self.ingest_document(
-            file_path=document.file_path,
-            collection_id=document.collection_id,
-            embedding_provider_id=document.embedding_provider_id,
-            chunking_strategy_id=document.chunking_strategy_id,
-            metadata=document.metadata
+            file_path=file_path,
+            collection_id=collection_id,
+            embedding_provider_id=embedding_provider_id,
+            chunking_strategy_id=chunking_strategy_id,
+            metadata=metadata
         )
     
     def _compute_hash(self, content: str) -> str:

@@ -52,6 +52,10 @@ class EmbeddingProviderBase(ABC):
     def get_dimension(self) -> int:
         pass
 
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Alias for embed_texts (document-side embeddings)."""
+        return self.embed_texts(texts)
+
 
 class OpenAIEmbeddingProvider(EmbeddingProviderBase):
     """OpenAI embedding provider"""
@@ -200,6 +204,9 @@ class EmbeddingProviderFactory:
         if not provider_class:
             raise ValueError(f"Unknown provider type: {provider_type}")
         return provider_class(model_name=model_name, config=config)
+
+    # Backwards-compatible alias used throughout the services layer.
+    create_provider = create
 
     @classmethod
     def from_db_config(cls, embedding_provider) -> EmbeddingProviderBase:

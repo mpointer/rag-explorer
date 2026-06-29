@@ -328,8 +328,20 @@ class SearchService:
             return {}
         
         results = query_record.results
-        retrieved_ids = [r["metadata"].get("document_id") for r in results]
-        
+
+        # Results are chunk-level, but relevance is judged at the document
+        # level, so collapse to unique document ids preserving rank order.
+        # Without this a single relevant document matched by many chunks would
+        # push recall/NDCG above 1.0.
+        retrieved_ids: List[str] = []
+        seen = set()
+        for r in results:
+            doc_id = r.get("metadata", {}).get("document_id")
+            key = str(doc_id)
+            if doc_id is not None and key not in seen:
+                seen.add(key)
+                retrieved_ids.append(doc_id)
+
         metrics = {}
         
         # MRR - Mean Reciprocal Rank

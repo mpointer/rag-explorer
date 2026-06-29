@@ -1,137 +1,147 @@
-"""Database Models for RAG Explorer"""
+"""Database Models for RAG Explorer
+
+These SQLModel tables are the source of truth for the relational metadata that
+backs the RAG platform. The actual vectors live in ChromaDB; here we keep the
+configuration (providers, chunking strategies, collections) and bookkeeping
+(documents, chunks, queries, experiments, crawl jobs).
+
+Note: ``metadata`` is reserved by SQLAlchemy's declarative base, so JSON
+metadata columns are named ``*_metadata`` / ``*_json`` instead.
+"""
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime
+
+from sqlalchemy import Column, JSON
 from sqlmodel import SQLModel, Field
 
 
 class EmbeddingProvider(SQLModel, table=True):
-    """Configuration for embedding model providers"""
+    """Configuration for an embedding model provider."""
     id: Optional[int] = Field(default=None, primary_key=True)
-    key: str = Field(unique=True)
+    key: Optional[str] = Field(default=None)
     name: str
     provider_type: str
     model_name: str
     dimension: int
+    description: Optional[str] = None
     config_json: Optional[str] = None
     enabled: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ChunkingStrategy(SQLModel, table=True):
-    """Configurable chunking strategies for experimentation"""
+    """A configurable chunking strategy used during ingestion."""
     id: Optional[int] = Field(default=None, primary_key=True)
-    key: str = Field(unique=True)
+    key: Optional[str] = Field(default=None)
     name: str
     strategy_type: str
-    chunk_size: int = 1000
-    chunk_overlap: int = 200
+    chunk_size: int = 500
+    overlap: int = 50
+    description: Optional[str] = None
     config_json: Optional[str] = None
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class VectorCollection(SQLModel, table=True):
-    """Vector database collections (knowledge bases)"""
+    """A vector database collection (knowledge base).
+
+    The collection ``name`` is used directly as the ChromaDB collection name.
+    Embedding/chunking choices are made per-ingestion, so the references here
+    are optional defaults rather than hard requirements.
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(unique=True)
     description: Optional[str] = None
-    embedding_provider_id: int = Field(foreign_key="embeddingprovider.id")
-    chunking_strategy_id: int = Field(foreign_key="chunkingstrategy.id")
-    chroma_collection_name: str
+    embedding_provider_id: Optional[int] = Field(default=None, foreign_key="embeddingprovider.id")
+    chunking_strategy_id: Optional[int] = Field(default=None, foreign_key="chunkingstrategy.id")
+    chroma_collection_name: Optional[str] = None
     document_count: int = 0
     chunk_count: int = 0
-    metadata_schema: Optional[str] = None
     security_enabled: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: Optional[datetime] = None
 
 
 class IndexedDocument(SQLModel, table=True):
-    """Documents ingested into vector collections"""
+    """A document that has been ingested into a vector collection."""
     id: Optional[int] = Field(default=None, primary_key=True)
     collection_id: int = Field(foreign_key="vectorcollection.id")
-    source_type: str
-    source_url: Optional[str] = None
+    embedding_provider_id: Optional[int] = Field(default=None, foreign_key="embeddingprovider.id")
+    chunking_strategy_id: Optional[int] = Field(default=None, foreign_key="chunkingstrategy.id")
+    filename: str
     file_path: Optional[str] = None
-    title: str
-    content_hash: str
+    file_size: Optional[int] = None
+    content_hash: Optional[str] = None
+    source_type: str = "upload"
+    source_url: Optional[str] = None
+    status: str = "pending"
     chunk_count: int = 0
-    metadata_json: Optional[str] = None
-    security_level: Optional[str] = None
-    tags: Optional[str] = None
+    doc_metadata: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
     indexed_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class DocumentChunk(SQLModel, table=True):
-    """Individual chunks with embeddings stored in ChromaDB"""
+    """An individual chunk of a document. The embedding lives in ChromaDB."""
     id: Optional[int] = Field(default=None, primary_key=True)
     document_id: int = Field(foreign_key="indexeddocument.id")
-    collection_id: int = Field(foreign_key="vectorcollection.id")
-    chroma_id: str
     chunk_index: int
-    content: str
-    token_count: int
-    metadata_json: Optional[str] = None
+    text: str
+    start_char: Optional[int] = None
+    end_char: Optional[int] = None
+    token_count: Optional[int] = None
+    chroma_id: str
+    chunk_metadata: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class RAGExperiment(SQLModel, table=True):
-    """Experiment configurations for A/B testing"""
+    """An A/B test experiment comparing two RAG configurations."""
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     description: Optional[str] = None
     collection_id: int = Field(foreign_key="vectorcollection.id")
-    embedding_provider_id: int = Field(foreign_key="embeddingprovider.id")
-    chunking_strategy_id: int = Field(foreign_key="chunkingstrategy.id")
-    top_k: int = 5
-    enable_reranking: bool = False
-    reranking_model: Optional[str] = None
-    enable_hybrid_search: bool = False
-    hybrid_alpha: float = 0.5
+    config_a: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    config_b: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    status: str = "active"
     test_query_count: int = 0
     avg_mrr: Optional[float] = None
     avg_ndcg: Optional[float] = None
-    avg_precision_at_k: Optional[float] = None
-    avg_recall_at_k: Optional[float] = None
-    config_json: Optional[str] = None
-    is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: Optional[datetime] = None
 
 
 class RAGQuery(SQLModel, table=True):
-    """Search queries and results for quality measurement"""
+    """A search query and its results, used for quality measurement."""
     id: Optional[int] = Field(default=None, primary_key=True)
     experiment_id: Optional[int] = Field(default=None, foreign_key="ragexperiment.id")
     collection_id: int = Field(foreign_key="vectorcollection.id")
+    embedding_provider_id: Optional[int] = Field(default=None, foreign_key="embeddingprovider.id")
     query_text: str
-    results_json: Optional[str] = None
+    search_type: str = "semantic"
+    top_k: int = 10
+    filters: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    results: Optional[List[Dict[str, Any]]] = Field(default=None, sa_column=Column(JSON))
     result_count: int = 0
-    mrr: Optional[float] = None
-    ndcg: Optional[float] = None
-    precision_at_k: Optional[float] = None
-    recall_at_k: Optional[float] = None
+    metrics: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
     latency_ms: Optional[int] = None
-    relevant_doc_ids: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class CrawlJob(SQLModel, table=True):
-    """Web crawling jobs"""
+    """A web crawling job."""
     id: Optional[int] = Field(default=None, primary_key=True)
-    collection_id: int = Field(foreign_key="vectorcollection.id")
-    start_url: str
-    crawl_type: str
-    max_depth: int = 1
+    collection_id: Optional[int] = Field(default=None, foreign_key="vectorcollection.id")
+    url: str
+    crawl_type: str = "single"
+    max_depth: int = 2
     max_pages: int = 100
     respect_robots: bool = True
     status: str = "queued"
     pages_crawled: int = 0
-    pages_indexed: int = 0
-    error: Optional[str] = None
-    is_recurring: bool = False
-    cron_schedule: Optional[str] = None
+    pages_failed: int = 0
+    result_summary: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
